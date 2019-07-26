@@ -3,27 +3,31 @@ const mongoose = require('./mongoose')
 
 const exportAPI = async (ctx) => {
   await new Promise(resolve => mongoose.once('open', () => resolve()))
-  const resp = ctx.body = new stream.PassThrough() // 0.1ms
-  exportCsv(resp).catch((err) => {
-    console.error(err)
-    // not care response
-  })
+  ctx.body = await exportCsv({})
 }
 
-async function exportCsv (resp) {
-  while (true) {
-    const conds = {}
-    const invoices = await mongoose.db.collection('invoice').find(conds, {limit: 10}).toArray()
-    console.log('read invoices', invoices.length)
-    // const invoice = await invoiceCursor.next()
-    if (!invoices.length) {
-      resp.push(null) // response
-      return
+async function exportCsv (conds) {
+  // const conds = {}
+  let skip = 0
+  const limit = 10
+  const readable = new stream.Readable({
+    read () {
+      ;(async () => {
+        const invoices = await mongoose.db.collection('invoice').find(conds, {skip: skip, limit: limit}).toArray()
+        if (!invoices.length) this.push(null)
+        invoices.forEach(invoice => {
+          const line = []
+          Object.keys(invoice).forEach(key => line.push(invoice[key]))
+          this.push(new Buffer(line.join(',') + '\n'))
+        })
+        skip += limit
+      })().catch(err => {
+        this.emit('error', err)
+      })
+      this.push()
     }
-    invoices.forEach((invoice) => {
-      resp.push('invoice.id, invoice.price,' + invoice._id.toString()  + '\n')
-    })
-  }
+  })
+  return readable
 }
 
 async function main () {
